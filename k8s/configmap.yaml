@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: production
+  labels:
+    app: my-webapp
+    app.kubernetes.io/name: my-webapp
+    app.kubernetes.io/part-of: production-suite
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
