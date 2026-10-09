@@ -123,7 +123,7 @@ jobs:
           kubectl apply -f k8s/ -n production
 
           # Ensure deployment image is set and rollout completes cleanly
-          kubectl set image deployment/${{ env.APP_NAME }}-deployment ${{ env.APP_NAME }}=${{ IMAGE_URI }} -n production
+          kubectl set image deployment/${{ env.APP_NAME }}-deployment ${{ env.APP_NAME }}="${IMAGE_URI}" -n production
           kubectl rollout status deployment/${{ env.APP_NAME }}-deployment -n production --timeout=300s
 
       - name: Retrieve Public IP, Port & Verify Index Page
@@ -174,13 +174,13 @@ jobs:
 
           echo "Waiting for LoadBalancer to register targets and serve index.html..."
           APP_CONTENT=""
-          for i in $(seq 1 30); do
+          for i in $(seq 1 40); do
             APP_CONTENT=$(curl -s -m 5 "http://$LB_HOST:$PORT" || true)
             if echo "$APP_CONTENT" | grep -qi "Ronaldo"; then
               echo "✅ Success! Application responded with index.html content."
               break
             fi
-            echo "Attempt $i/30: LoadBalancer warming up... waiting 6s"
+            echo "Attempt $i/40: LoadBalancer warming up... waiting 6s"
             sleep 6
           done
 
@@ -190,21 +190,22 @@ jobs:
           echo "==========================================================="
 
           # Write summary to GitHub Step Summary
-          cat <<EOF >> $GITHUB_STEP_SUMMARY
-          # 🚀 Application Deployed & Verified
+          {
+            echo "# 🚀 Application Deployed & Verified"
+            echo ""
+            echo "Everything was built and deployed automatically via \`git push\`."
+            echo ""
+            echo "### 🌐 Public Access Details"
+            echo "- **Public URL**: [http://$LB_HOST:$PORT](http://$LB_HOST:$PORT)"
+            echo "- **LoadBalancer Hostname**: \`$LB_HOST\`"
+            echo "- **Public IP(s)**: \`${PUBLIC_IPS:-$LB_HOST}\`"
+            echo "- **Service Port**: \`$PORT\`"
+            echo "- **NodePort**: \`$NODE_PORT\`"
+            echo "- **Node Public IPs**: \`${NODE_IPS:-Not Assigned}\`"
+            echo ""
+            echo "### 📄 \`index.html\` Response:"
+            echo '```html'
+            echo "$APP_CONTENT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          Everything was built and deployed automatically via \`git push\`.
-
-          ### 🌐 Public Access Details
-          - **Public URL**: [http://$LB_HOST:$PORT](http://$LB_HOST:$PORT)
-          - **LoadBalancer Hostname**: \`$LB_HOST\`
-          - **Public IP(s)**: \`${PUBLIC_IPS:-$LB_HOST}\`
-          - **Service Port**: \`$PORT\`
-          - **NodePort**: \`$NODE_PORT\`
-          - **Node Public IPs**: \`${NODE_IPS:-Not Assigned}\`
-
-          ### 📄 \`index.html\` Response:
-          \`\`\`html
-          $APP_CONTENT
-          \`\`\`
-          EOF
