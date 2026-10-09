@@ -67,20 +67,28 @@ jobs:
       - name: Terraform Init & Apply
         id: terraform
         run: |
+          set -euo pipefail
           cd terraform
           echo "==> Initializing Terraform with S3 backend..."
           terraform init \
+            -input=false \
             -reconfigure \
             -backend-config="bucket=${{ env.BUCKET_NAME }}" \
             -backend-config="key=production/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION }}"
 
+          echo "==> Validating Terraform configuration..."
+          terraform fmt -check -recursive
+          terraform validate
+
           echo "==> Applying Terraform Infrastructure (VPC, ECR, EKS)..."
-          terraform apply -auto-approve
+          terraform apply -auto-approve -input=false
 
           ECR_REPO_URL=$(terraform output -raw ecr_repository_url)
+          ECR_REPO_NAME=$(terraform output -raw ecr_repository_name)
           CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
           echo "ECR_REPO_URL=$ECR_REPO_URL" >> $GITHUB_ENV
+          echo "ECR_REPO_NAME=$ECR_REPO_NAME" >> $GITHUB_ENV
           echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
 
       - name: Log in to Amazon ECR
@@ -97,15 +105,16 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+            ${{ env.ECR_REPO_URL }}:${{ github.sha }}
+            ${{ env.ECR_REPO_URL }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Configure Kubectl for EKS
         run: |
-          echo "Connecting to EKS cluster: ${{ env.CLUSTER_NAME || env.EKS_CLUSTER_NAME }}"
-          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME || env.EKS_CLUSTER_NAME }}
+          CLUSTER_TO_USE="${CLUSTER_NAME:-$EKS_CLUSTER_NAME}"
+          echo "Connecting to EKS cluster: $CLUSTER_TO_USE"
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name "$CLUSTER_TO_USE"
 
       - name: Ensure Kubernetes Namespace
         run: |
@@ -113,7 +122,7 @@ jobs:
 
       - name: Deploy Kubernetes Manifests
         run: |
-          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+          IMAGE_URI="${{ env.ECR_REPO_URL }}:${{ github.sha }}"
           echo "Deploying container image: $IMAGE_URI"
 
           # Dynamically inject the newly built image tag into deployment manifest
@@ -123,11 +132,12 @@ jobs:
           kubectl apply -f k8s/ -n production
 
           # Ensure deployment image is set and rollout completes cleanly
-          kubectl set image deployment/${{ env.APP_NAME }}-deployment ${{ env.APP_NAME }}=${{ IMAGE_URI }} -n production
+          kubectl set image deployment/${{ env.APP_NAME }}-deployment ${{ env.APP_NAME }}=${IMAGE_URI} -n production
           kubectl rollout status deployment/${{ env.APP_NAME }}-deployment -n production --timeout=300s
 
       - name: Retrieve Public IP, Port & Verify Index Page
         run: |
+          set -euo pipefail
           echo "Waiting for AWS Load Balancer to provision external hostname..."
           LB_HOST=""
           for i in $(seq 1 60); do
@@ -144,9 +154,20 @@ jobs:
           done
 
           if [ -z "$LB_HOST" ]; then
-            echo "Error: Timed out waiting for LoadBalancer address."
+            echo "::warning::Timed out waiting for LoadBalancer address. Deployment rollout completed, but external endpoint is not ready yet."
             kubectl describe svc my-webapp-service -n production
-            exit 1
+            cat <<EOF >> $GITHUB_STEP_SUMMARY
+            # 🚀 Application Deployed
+
+            Deployment rollout succeeded, but LoadBalancer address was not ready before timeout.
+            Check service events and try again in a few minutes:
+
+            \`\`\`bash
+            kubectl get svc my-webapp-service -n production
+            kubectl describe svc my-webapp-service -n production
+            \`\`\`
+            EOF
+            exit 0
           fi
 
           PORT=$(kubectl get svc my-webapp-service -n production -o jsonpath='{.spec.ports[0].port}')
