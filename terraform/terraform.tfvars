@@ -1,7 +1,7 @@
 aws_region          = "ap-southeast-2"
 environment         = "production"
 cluster_name        = "eks-prod-cluster"
-cluster_version     = "1.36"
+cluster_version     = "1.30"
 ecr_repository_name = "my-webapp"
 availability_zones  = ["ap-southeast-2a", "ap-southeast-2b"]
 node_instance_types = ["t3.medium"]

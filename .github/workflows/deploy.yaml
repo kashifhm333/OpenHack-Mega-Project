@@ -1,19 +1,24 @@
-name: Push Build Image To ECR & Deploy to EKS
+name: CI/CD Pipeline - Terraform Infra, Docker Build & EKS Deploy
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 env:
   AWS_REGION: ap-southeast-2
+  TF_STATE_BUCKET: openhack-tfstate-529976312848-apse2
   ECR_REPOSITORY: my-webapp
   EKS_CLUSTER_NAME: eks-prod-cluster
   APP_NAME: my-webapp
 
 jobs:
-  build-and-deploy:
+  build-provision-and-deploy:
+    name: Build, Provision & Deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -25,6 +30,59 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: Setup Kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.30.0'
+
+      - name: Ensure S3 Remote State Bucket
+        id: s3-state
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="${{ env.TF_STATE_BUCKET }}"
+          if [ -z "$BUCKET" ]; then
+            BUCKET="openhack-tfstate-${ACCOUNT_ID}-${{ env.AWS_REGION }}"
+          fi
+          echo "Using Terraform state bucket: $BUCKET"
+          echo "BUCKET_NAME=$BUCKET" >> $GITHUB_ENV
+
+          if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "Bucket $BUCKET does not exist. Creating..."
+            if [ "${{ env.AWS_REGION }}" = "us-east-1" ]; then
+              aws s3api create-bucket --bucket "$BUCKET"
+            else
+              aws s3api create-bucket --bucket "$BUCKET" --region ${{ env.AWS_REGION }} --create-bucket-configuration LocationConstraint=${{ env.AWS_REGION }}
+            fi
+            aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
+          else
+            echo "Bucket $BUCKET already exists."
+          fi
+
+      - name: Terraform Init & Apply
+        id: terraform
+        run: |
+          cd terraform
+          echo "==> Initializing Terraform with S3 backend..."
+          terraform init \
+            -reconfigure \
+            -backend-config="bucket=${{ env.BUCKET_NAME }}" \
+            -backend-config="key=production/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+          echo "==> Applying Terraform Infrastructure (VPC, ECR, EKS)..."
+          terraform apply -auto-approve
+
+          ECR_REPO_URL=$(terraform output -raw ecr_repository_url)
+          CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
+          echo "ECR_REPO_URL=$ECR_REPO_URL" >> $GITHUB_ENV
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+
       - name: Log in to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -32,7 +90,8 @@ jobs:
       - name: Docker Setup Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Docker Build and Push
+      - name: Docker Build and Push to ECR
+        id: docker-build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -43,28 +102,109 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Connect to EKS Cluster
+      - name: Configure Kubectl for EKS
         run: |
-          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+          echo "Connecting to EKS cluster: ${{ env.CLUSTER_NAME || env.EKS_CLUSTER_NAME }}"
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME || env.EKS_CLUSTER_NAME }}
 
-      - name: Ensure Kubernetes Namespace Exists
+      - name: Ensure Kubernetes Namespace
         run: |
           kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Apply Kubernetes Manifests (Config/Deployment/Service/HPA/PDB)
+      - name: Deploy Kubernetes Manifests
         run: |
-          if [ -d "k8s" ] && [ "$(ls -A k8s/*.yaml 2>/dev/null || ls -A k8s/*.yml 2>/dev/null)" ]; then
-            kubectl apply -f k8s/ -n production
-          else
-            echo "No k8s manifests found in k8s/, skipping manifest apply."
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+          echo "Deploying container image: $IMAGE_URI"
+
+          # Dynamically inject the newly built image tag into deployment manifest
+          sed -i "s|image: .*my-webapp.*|image: ${IMAGE_URI}|g" k8s/deployment.yaml
+
+          # Apply all manifests in k8s directory
+          kubectl apply -f k8s/ -n production
+
+          # Ensure deployment image is set and rollout completes cleanly
+          kubectl set image deployment/${{ env.APP_NAME }}-deployment ${{ env.APP_NAME }}=${{ IMAGE_URI }} -n production
+          kubectl rollout status deployment/${{ env.APP_NAME }}-deployment -n production --timeout=300s
+
+      - name: Retrieve Public IP, Port & Verify Index Page
+        run: |
+          echo "Waiting for AWS Load Balancer to provision external hostname..."
+          LB_HOST=""
+          for i in $(seq 1 60); do
+            LB_HOST=$(kubectl get svc my-webapp-service -n production -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ -z "$LB_HOST" ]; then
+              LB_HOST=$(kubectl get svc my-webapp-service -n production -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            fi
+            if [ -n "$LB_HOST" ]; then
+              echo "LoadBalancer hostname found: $LB_HOST"
+              break
+            fi
+            echo "Waiting for LoadBalancer ingress address... ($i/60)"
+            sleep 5
+          done
+
+          if [ -z "$LB_HOST" ]; then
+            echo "Error: Timed out waiting for LoadBalancer address."
+            kubectl describe svc my-webapp-service -n production
+            exit 1
           fi
 
-      - name: Update Deployment Image & Verify Zero-Downtime Rollout
-        run: |
-          if kubectl get deployment/${{ env.APP_NAME }}-deployment -n production >/dev/null 2>&1; then
-            echo "Deploying immutable image tag: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
-            kubectl set image deployment/${{ env.APP_NAME }}-deployment ${{ env.APP_NAME }}=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }} -n production
-            kubectl rollout status deployment/${{ env.APP_NAME }}-deployment -n production --timeout=180s
-          else
-            echo "Deployment ${{ env.APP_NAME }}-deployment not yet created in production namespace, skipping rollout status check."
+          PORT=$(kubectl get svc my-webapp-service -n production -o jsonpath='{.spec.ports[0].port}')
+          NODE_PORT=$(kubectl get svc my-webapp-service -n production -o jsonpath='{.spec.ports[0].nodePort}')
+          NODE_IPS=$(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="ExternalIP")].address}' || true)
+
+          # Resolve LoadBalancer DNS hostname to Public IPv4 addresses
+          PUBLIC_IPS=$(dig +short "$LB_HOST" | grep -E '^[0-9.]+$' | tr '\n' ' ' || true)
+          if [ -z "$PUBLIC_IPS" ]; then
+            PUBLIC_IPS=$(getent hosts "$LB_HOST" | awk '{print $1}' | tr '\n' ' ' || true)
           fi
+
+          echo ""
+          echo "=========================================================="
+          echo "🎉 APPLICATION DEPLOYED SUCCESSFULLY!"
+          echo "=========================================================="
+          echo "Public LoadBalancer URL: http://$LB_HOST:$PORT"
+          echo "LoadBalancer Hostname  : $LB_HOST"
+          echo "LoadBalancer Public IPs: ${PUBLIC_IPS:-$LB_HOST}"
+          echo "Service Port           : $PORT"
+          echo "NodePort               : $NODE_PORT"
+          echo "Worker Node Public IPs : ${NODE_IPS:-None}"
+          echo "=========================================================="
+          echo ""
+
+          echo "Waiting for LoadBalancer to register targets and serve index.html..."
+          APP_CONTENT=""
+          for i in $(seq 1 30); do
+            APP_CONTENT=$(curl -s -m 5 "http://$LB_HOST:$PORT" || true)
+            if echo "$APP_CONTENT" | grep -qi "Ronaldo"; then
+              echo "✅ Success! Application responded with index.html content."
+              break
+            fi
+            echo "Attempt $i/30: LoadBalancer warming up... waiting 6s"
+            sleep 6
+          done
+
+          echo ""
+          echo "==================== INDEX FILE OUTPUT ===================="
+          echo "$APP_CONTENT"
+          echo "==========================================================="
+
+          # Write summary to GitHub Step Summary
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          # 🚀 Application Deployed & Verified
+
+          Everything was built and deployed automatically via \`git push\`.
+
+          ### 🌐 Public Access Details
+          - **Public URL**: [http://$LB_HOST:$PORT](http://$LB_HOST:$PORT)
+          - **LoadBalancer Hostname**: \`$LB_HOST\`
+          - **Public IP(s)**: \`${PUBLIC_IPS:-$LB_HOST}\`
+          - **Service Port**: \`$PORT\`
+          - **NodePort**: \`$NODE_PORT\`
+          - **Node Public IPs**: \`${NODE_IPS:-Not Assigned}\`
+
+          ### 📄 \`index.html\` Response:
+          \`\`\`html
+          $APP_CONTENT
+          \`\`\`
+          EOF
