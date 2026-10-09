@@ -10,3 +10,4 @@ metadata:
 data:
   NODE_ENV: "production"
   PORT: "3000"
+  AWS_REGION: "ap-southeast-2"

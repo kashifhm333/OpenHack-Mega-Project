@@ -1,7 +1,10 @@
-rg_name      = "rg-prod-k8s"
-location     = "East US"
-acr_name     = "acrprodminimal101"
-cluster_name = "aks-prod-cluster"
-dns_prefix   = "aksprod"
-vm_size      = "Standard_B2s"
-node_count   = 1
+aws_region          = "ap-southeast-2"
+environment         = "production"
+cluster_name        = "eks-prod-cluster"
+cluster_version     = "1.36"
+ecr_repository_name = "my-webapp"
+availability_zones  = ["ap-southeast-2a", "ap-southeast-2b"]
+node_instance_types = ["t3.medium"]
+desired_node_count  = 2
+min_node_count      = 1
+max_node_count      = 4

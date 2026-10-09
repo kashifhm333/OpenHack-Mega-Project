@@ -6,6 +6,9 @@ metadata:
   labels:
     app: my-webapp
     app.kubernetes.io/name: my-webapp
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
 spec:
   type: LoadBalancer
   selector:

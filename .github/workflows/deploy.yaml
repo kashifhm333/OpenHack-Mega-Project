@@ -1,4 +1,4 @@
-name: Push Build Image To ACR & Deploy to AKS
+name: Push Build Image To ECR & Deploy to EKS
 
 on:
   push:
@@ -6,9 +6,9 @@ on:
       - main
 
 env:
-  AZURE_RESOURCE_GROUP: rg-prod-k8s
-  AZURE_CLUSTER_NAME: aks-prod-cluster
-  AZURE_ACR_NAME: acrprodminimal101
+  AWS_REGION: ap-southeast-2
+  ECR_REPOSITORY: my-webapp
+  EKS_CLUSTER_NAME: eks-prod-cluster
   APP_NAME: my-webapp
 
 jobs:
@@ -18,13 +18,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Azure Login
-        uses: azure/login@v2
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Azure Container Registry
-        run: az acr login --name ${{ env.AZURE_ACR_NAME }}
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Docker Setup Buildx
         uses: docker/setup-buildx-action@v3
@@ -35,20 +38,20 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.AZURE_ACR_NAME }}.azurecr.io/${{ env.APP_NAME }}:${{ github.sha }}
-            ${{ env.AZURE_ACR_NAME }}.azurecr.io/${{ env.APP_NAME }}:latest
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Connect to AKS Cluster
+      - name: Connect to EKS Cluster
         run: |
-          az aks get-credentials --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --name ${{ env.AZURE_CLUSTER_NAME }} --overwrite-existing
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
 
       - name: Ensure Kubernetes Namespace Exists
         run: |
           kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Apply Kubernetes Manifests (Config/Deployment/Service)
+      - name: Apply Kubernetes Manifests (Config/Deployment/Service/HPA/PDB)
         run: |
           if [ -d "k8s" ] && [ "$(ls -A k8s/*.yaml 2>/dev/null || ls -A k8s/*.yml 2>/dev/null)" ]; then
             kubectl apply -f k8s/ -n production
@@ -56,10 +59,12 @@ jobs:
             echo "No k8s manifests found in k8s/, skipping manifest apply."
           fi
 
-      - name: Restart Kubernetes Deployment to Pull New Image
+      - name: Update Deployment Image & Verify Zero-Downtime Rollout
         run: |
           if kubectl get deployment/${{ env.APP_NAME }}-deployment -n production >/dev/null 2>&1; then
-            kubectl rollout restart deployment/${{ env.APP_NAME }}-deployment -n production
+            echo "Deploying immutable image tag: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+            kubectl set image deployment/${{ env.APP_NAME }}-deployment ${{ env.APP_NAME }}=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }} -n production
+            kubectl rollout status deployment/${{ env.APP_NAME }}-deployment -n production --timeout=180s
           else
-            echo "Deployment ${{ env.APP_NAME }}-deployment not yet created in production namespace, skipping rollout restart."
+            echo "Deployment ${{ env.APP_NAME }}-deployment not yet created in production namespace, skipping rollout status check."
           fi

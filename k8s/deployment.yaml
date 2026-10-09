@@ -30,7 +30,7 @@ spec:
         fsGroup: 10001
       containers:
       - name: my-webapp
-        image: acrprodminimal101.azurecr.io/my-webapp:latest
+        image: 529976312848.dkr.ecr.ap-southeast-2.amazonaws.com/my-webapp:latest
         imagePullPolicy: Always
         ports:
         - name: http

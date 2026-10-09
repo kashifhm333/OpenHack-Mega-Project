@@ -1,20 +1,29 @@
-output "resource_group_name" {
-  description = "Resource Group Name"
-  value       = module.rg.name
+output "vpc_id" {
+  description = "The ID of the provisioned VPC"
+  value       = module.vpc.vpc_id
 }
 
-output "acr_login_server" {
-  description = "Azure Container Registry Login Server"
-  value       = module.acr.login_server
+output "ecr_repository_url" {
+  description = "Amazon ECR Repository URL"
+  value       = module.ecr.repository_url
 }
 
-output "aks_cluster_name" {
-  description = "AKS Cluster Name"
-  value       = module.aks.cluster_name
+output "ecr_repository_name" {
+  description = "Amazon ECR Repository Name"
+  value       = module.ecr.repository_name
 }
 
-output "kube_config" {
-  description = "Raw kubeconfig configuration string to connect to the cluster"
-  value       = module.aks.kube_config
-  sensitive   = true
+output "eks_cluster_name" {
+  description = "Amazon EKS Cluster Name"
+  value       = module.eks.cluster_name
+}
+
+output "eks_cluster_endpoint" {
+  description = "Amazon EKS Cluster API Server Endpoint"
+  value       = module.eks.cluster_endpoint
+}
+
+output "configure_kubectl_command" {
+  description = "CLI command to generate local or CI/CD kubeconfig"
+  value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
 }

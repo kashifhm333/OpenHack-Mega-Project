@@ -1,43 +1,46 @@
 terraform {
-  required_version = ">= 1.3.0"
+  required_version = ">= 1.5.0, < 2.0.0"
   required_providers {
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 3.0"
+    aws = {
+      source = "hashicorp/aws"
+    version = "~> 6.67.0" }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+
+  default_tags {
+    tags = {
+      Environment = var.environment
+      ManagedBy   = "Terraform"
     }
   }
 }
 
-provider "azurerm" {
-  features {}
-}
-
-module "rg" {
-  source   = "./modules/resource_group"
-  rg_name  = var.rg_name
-  location = var.location
-}
-
-module "acr" {
-  source              = "./modules/acr"
-  acr_name            = var.acr_name
-  resource_group_name = module.rg.name
-  location            = module.rg.location
-}
-
-module "aks" {
-  source              = "./modules/aks"
+module "vpc" {
+  source              = "./modules/vpc"
+  vpc_cidr            = var.vpc_cidr
+  public_subnet_cidrs = var.public_subnet_cidrs
+  availability_zones  = var.availability_zones
   cluster_name        = var.cluster_name
-  resource_group_name = module.rg.name
-  location            = module.rg.location
-  dns_prefix          = var.dns_prefix
-  vm_size             = var.vm_size
-  node_count          = var.node_count
+  environment         = var.environment
 }
 
-resource "azurerm_role_assignment" "aks_acr_pull" {
-  principal_id                     = module.aks.kubelet_identity_object_id
-  role_definition_name             = "AcrPull"
-  scope                            = module.acr.id
-  skip_service_principal_aad_check = true
+module "ecr" {
+  source          = "./modules/ecr"
+  repository_name = var.ecr_repository_name
+  environment     = var.environment
+}
+
+module "eks" {
+  source              = "./modules/eks"
+  cluster_name        = var.cluster_name
+  cluster_version     = var.cluster_version
+  subnet_ids          = module.vpc.public_subnet_ids
+  node_instance_types = var.node_instance_types
+  desired_size        = var.desired_node_count
+  min_size            = var.min_node_count
+  max_size            = var.max_node_count
+  environment         = var.environment
 }
