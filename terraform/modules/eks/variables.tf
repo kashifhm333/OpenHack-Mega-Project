@@ -18,7 +18,7 @@ variable "subnet_ids" {
 variable "node_instance_types" {
   description = "Instance types for the EKS managed node group"
   type        = list(string)
-  default     = ["t2.micro"]
+  default     = ["t3.medium"]
 }
 
 variable "desired_size" {
