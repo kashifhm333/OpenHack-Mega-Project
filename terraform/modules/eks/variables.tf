@@ -18,7 +18,7 @@ variable "subnet_ids" {
 variable "node_instance_types" {
   description = "Instance types for the EKS managed node group"
   type        = list(string)
-  default     = ["t3.medium"]
+  default     = ["c7i-flex.large"]
 }
 
 variable "desired_size" {
