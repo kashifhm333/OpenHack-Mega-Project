@@ -1,49 +1,52 @@
 # Frontend Client - Task Management & Notes Dashboard
 
-A modern, highly responsive Single-Page Application (SPA) built with **React**, **Vite**, **Tailwind CSS**, and **Lucide React** communicating with a Node.js/Express backend API.
+A modern, responsive Single-Page Application (SPA) built with **React 19**, **Vite**, **Tailwind CSS**, and **Lucide React**. Containerized with a multi-stage **Nginx 1.27 Alpine** build that serves optimized static assets and reverse-proxies API traffic to the backend service.
 
 ---
 
-## Tech Stack & Architecture
+## 🚀 Tech Stack & Architecture
 
-- **UI Framework:** React 19 (Functional Components, Hooks: `useState`, `useEffect`, `useCallback`)
-- **Bundler & Tooling:** Vite 8 (Ultra-fast Hot Module Replacement)
-- **Styling:** Tailwind CSS (Modern utility classes, dark theme, responsive grid)
+- **UI Framework:** React 19 (Functional Components & Hooks)
+- **Tooling & Bundler:** Vite 8 (Ultra-fast builds and Hot Module Replacement)
+- **Styling:** Tailwind CSS (Dark-themed glassmorphism UI, responsive layout)
 - **Icons:** Lucide React
-- **Web Server:** Nginx Alpine (Production multi-stage container with SPA fallback routing)
+- **Web Server:** Nginx 1.27 Alpine (Multi-stage production image)
+- **Internal API Proxy:** Nginx routes `/api/*` directly to `backend-service.production.svc.cluster.local:5000` within the Kubernetes cluster, eliminating cross-origin browser complications.
 
 ---
 
-## Key Features
+## ✨ Features
 
-1. **Full CRUD Support:**
-   - **Create:** Add new tasks and notes with priority levels, categories, and optional details.
-   - **Read:** Fetch live tasks from the Express backend with search and category filter pills.
-   - **Delete:** Remove tasks with active loading indicators and feedback toasts.
-   - **Status Toggle:** Toggle completion with optimistic UI updates.
-2. **Environment Variable Configuration:**
-   - Reads `import.meta.env.VITE_API_URL` dynamically with a fallback to `http://localhost:5000`.
-3. **Resilient Network Handling:**
-   - Visual connection indicator (Green pulse for connected, Red for offline).
-   - Informative troubleshooting alert when the backend is unreachable, complete with retry button.
-   - Animated shimmer skeletons during initial data fetch.
+1. **Full CRUD State Machine:**
+   - **Create:** Fast modal/form to post new tasks with title, category, description, and priority level.
+   - **Read:** Live data ingestion from the Express backend with category filtering and keyword search.
+   - **Update/Toggle:** Instant optimistic UI updates when marking tasks complete.
+   - **Delete:** Interactive deletion with visual status indicators and non-blocking toast alerts.
+2. **Resilient Network Handling:**
+   - Dynamic API helper (`src/api.js`) with request timeouts (10s) and detailed error diagnostics.
+   - Live backend connectivity badge (Green for connected, Red for offline).
+   - Animated shimmer pulse skeletons during initial data fetches.
+3. **Optimized Delivery:**
+   - Pre-configured Gzip compression in Nginx.
+   - 1-year immutable caching on hashed static assets in `/assets/`.
 
 ---
 
-## Environment Variables
+## ⚙️ Environment Variables
 
-Create a `.env` file in the `my-react-app` root directory:
+For local development, environment variables are managed in `.env`:
 
 ```env
-# Backend API Base URL (Default for Express server)
+# Optional: explicitly set backend URL during local dev (defaults to http://localhost:5000)
 VITE_API_URL=http://localhost:5000
 ```
 
-> **Note:** During Docker builds, this can be overridden using the `--build-arg VITE_API_URL=<url>` flag.
+> [!NOTE]
+> In production on Kubernetes, `VITE_API_URL` is intentionally empty so all requests use relative paths (`/api/tasks`). Nginx then proxies them internally to the cluster backend.
 
 ---
 
-## Local Development (Without Docker)
+## 💻 Local Development (Without Docker)
 
 ### Prerequisites
 - Node.js >= 18.x
@@ -51,11 +54,11 @@ VITE_API_URL=http://localhost:5000
 
 ### 1. Install Dependencies
 ```bash
-cd my-react-app
+cd app/my-react-app
 npm install
 ```
 
-### 2. Start Vite Development Server
+### 2. Start Vite Dev Server
 ```bash
 npm run dev
 ```
@@ -69,46 +72,41 @@ npm run preview
 
 ---
 
-## Docker Containerization (Multi-Stage Build)
+## 🐳 Docker Containerization (Multi-Stage Build)
 
-The frontend uses a two-stage Docker architecture:
-1. **Stage 1 (`builder`):** Uses `node:22-alpine` to install dependencies (`npm ci`) and compile the React application into `/app/dist` via Vite.
-2. **Stage 2 (`production`):** Uses `nginx:1.27-alpine` to serve static assets with:
-   - Client-side Single Page Application routing (`try_files $uri $uri/ /index.html;`)
-   - Gzip compression for static text/js/css
-   - 1-year immutable caching for hashed assets in `/assets/`
-   - Active `HEALTHCHECK` for container health monitoring
+The frontend uses a two-stage `Dockerfile`:
+1. **Stage 1 (`builder`):** Uses `node:22-alpine` to install dependencies (`npm ci`) and compile the production bundle into `/app/dist` via Vite.
+2. **Stage 2 (`production`):** Copies compiled assets to `nginx:1.27-alpine` and attaches `nginx.conf`:
+   - Single Page Application routing (`try_files $uri $uri/ /index.html;`)
+   - Internal reverse proxy for `/api/` to `backend-service.production.svc.cluster.local:5000`
+   - Security headers (`X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection`)
+   - Gzip compression and static caching
 
 ### Build the Image
 ```bash
-# Standard build with default backend URL (http://localhost:5000)
+cd app/my-react-app
 docker build -t task-frontend:latest .
-
-# Build with custom backend URL
-docker build \
-  --build-arg VITE_API_URL=http://your-production-backend:5000 \
-  -t task-frontend:latest .
 ```
 
-### Run the Container
+### Run Container Locally
 ```bash
 docker run -d \
   --name task-frontend-container \
   -p 3000:80 \
   task-frontend:latest
 ```
-Access the dashboard in your browser at **`http://localhost:3000`**.
+Access at `http://localhost:3000`.
 
-### Verify Container Health & Logs
-```bash
-# Health status
-docker inspect --format='{{json .State.Health.Status}}' task-frontend-container
+---
 
-# Container logs
-docker logs -f task-frontend-container
-```
+## ☸️ Kubernetes Integration
 
-### Stop and Clean Up
-```bash
-docker stop task-frontend-container && docker rm task-frontend-container
-```
+In the production Kubernetes cluster:
+- **Deployment:** Defined in [`k8s/deployment.yaml`](file:///home/kashifhm333/Desktop/Project/devops/k8s/deployment.yaml) with 2 replicas, pod anti-affinity, and TCP readiness/liveness probes on port 80.
+- **Service:** Defined in [`k8s/service.yaml`](file:///home/kashifhm333/Desktop/Project/devops/k8s/service.yaml) as an AWS Network Load Balancer (NLB) with `internet-facing` scheme:
+  ```yaml
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+  ```
+- **Autoscaling:** Scaled dynamically via [`k8s/hpa.yaml`](file:///home/kashifhm333/Desktop/Project/devops/k8s/hpa.yaml) (2 to 5 replicas).
