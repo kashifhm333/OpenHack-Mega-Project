@@ -16,16 +16,17 @@ spec:
     app: mongodb
 ---
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
-  name: mongodb
+  name: mongodb-deployment
   namespace: production
   labels:
     app: mongodb
     app.kubernetes.io/part-of: 3-tier-app
 spec:
-  serviceName: mongodb-service
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: mongodb
@@ -71,11 +72,6 @@ spec:
             port: 27017
           initialDelaySeconds: 15
           periodSeconds: 20
-  volumeClaimTemplates:
-  - metadata:
-      name: mongodb-data
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      resources:
-        requests:
-          storage: 5Gi
+      volumes:
+      - name: mongodb-data
+        emptyDir: {}

@@ -138,13 +138,17 @@ jobs:
           sed -i -E "s|(image: ).*|\1${FRONTEND_IMAGE}|" k8s/deployment.yaml
           sed -i -E "s|(image: ).*|\1${BACKEND_IMAGE}|" k8s/backend.yaml
 
+          # Remove any legacy stuck statefulset from previous run
+          kubectl delete statefulset mongodb -n production --ignore-not-found=true
+
           # Apply all manifests in k8s directory
           kubectl apply -f k8s/ -n production
 
           # Ensure rollouts complete cleanly
           kubectl rollout status deployment/${{ env.APP_NAME }}-deployment -n production --timeout=300s
           kubectl rollout status deployment/backend-deployment -n production --timeout=300s
-          kubectl rollout status statefulset/mongodb -n production --timeout=300s
+          kubectl rollout status deployment/mongodb-deployment -n production --timeout=300s
+
 
       - name: Retrieve Public IP, Port & Verify Index Page
         run: |
