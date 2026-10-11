@@ -144,10 +144,29 @@ jobs:
           # Apply all manifests in k8s directory
           kubectl apply -f k8s/ -n production
 
-          # Ensure rollouts complete cleanly
-          kubectl rollout status deployment/${{ env.APP_NAME }}-deployment -n production --timeout=300s
-          kubectl rollout status deployment/backend-deployment -n production --timeout=300s
-          kubectl rollout status deployment/mongodb-deployment -n production --timeout=300s
+          # Helper function to monitor rollout and print detailed diagnostics if stuck
+          wait_for_rollout() {
+            local resource=$1
+            echo "==> Monitoring rollout for $resource..."
+            if ! kubectl rollout status "$resource" -n production --timeout=180s; then
+              echo "❌ ROLLOUT FAILED FOR $resource!"
+              echo "--- Pod Status in production ---"
+              kubectl get pods -n production -o wide
+              echo "--- Describe Pods ---"
+              kubectl describe pods -n production
+              echo "--- Pod Logs ---"
+              kubectl logs -l app=my-webapp -n production --tail=50 || true
+              kubectl logs -l app=backend -n production --tail=50 || true
+              kubectl logs -l app=mongodb -n production --tail=50 || true
+              exit 1
+            fi
+            echo "✅ Successfully rolled out $resource"
+          }
+
+          wait_for_rollout deployment/${{ env.APP_NAME }}-deployment
+          wait_for_rollout deployment/backend-deployment
+          wait_for_rollout deployment/mongodb-deployment
+
 
 
       - name: Retrieve Public IP, Port & Verify Index Page

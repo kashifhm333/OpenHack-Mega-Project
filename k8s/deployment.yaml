@@ -15,7 +15,7 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
-      maxUnavailable: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: my-webapp
@@ -41,7 +41,7 @@ spec:
       containers:
       - name: my-webapp
         image: 529976312848.dkr.ecr.ap-southeast-2.amazonaws.com/my-webapp:latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - name: http
           containerPort: 80
@@ -53,18 +53,16 @@ spec:
             cpu: "200m"
             memory: "128Mi"
         readinessProbe:
-          httpGet:
-            path: /
+          tcpSocket:
             port: 80
-          initialDelaySeconds: 5
-          periodSeconds: 10
+          initialDelaySeconds: 3
+          periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 3
         livenessProbe:
-          httpGet:
-            path: /
+          tcpSocket:
             port: 80
-          initialDelaySeconds: 15
-          periodSeconds: 20
+          initialDelaySeconds: 10
+          periodSeconds: 10
           timeoutSeconds: 3
           failureThreshold: 3
