@@ -4,10 +4,9 @@ metadata:
   name: app-config
   namespace: production
   labels:
-    app: my-webapp
-    app.kubernetes.io/name: my-webapp
-    app.kubernetes.io/part-of: production-suite
+    app.kubernetes.io/part-of: 3-tier-app
 data:
   NODE_ENV: "production"
-  PORT: "3000"
+  PORT: "5000"
+  DB_NAME: "taskdb"
   AWS_REGION: "ap-southeast-2"

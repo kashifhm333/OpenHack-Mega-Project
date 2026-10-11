@@ -5,7 +5,9 @@ metadata:
   namespace: production
   labels:
     app: my-webapp
+    role: frontend
     app.kubernetes.io/name: my-webapp
+    app.kubernetes.io/part-of: 3-tier-app
   annotations:
     service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
     service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
@@ -17,4 +19,4 @@ spec:
     - name: http
       protocol: TCP
       port: 80
-      targetPort: 3000
+      targetPort: 80

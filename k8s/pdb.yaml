@@ -1,7 +1,7 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: my-webapp-pdb
+  name: frontend-pdb
   namespace: production
   labels:
     app: my-webapp
@@ -10,3 +10,16 @@ spec:
   selector:
     matchLabels:
       app: my-webapp
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb
+  namespace: production
+  labels:
+    app: backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: backend
