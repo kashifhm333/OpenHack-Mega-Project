@@ -109,9 +109,7 @@ export default function App() {
     }
   };
 
-  /**
-   * Handle toggle completion status (PATCH /api/tasks/:id)
-   */
+  
   const handleToggleComplete = async (id, completed) => {
     // Optimistic UI update
     setTasks((prev) =>
